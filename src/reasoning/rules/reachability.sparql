@@ -1,0 +1,88 @@
+# src/reasoning/rules/reachability.sparql
+#
+# SPARQL INSERT rules to materialise transit-based reachability facts.
+#
+# These rules operate over facility–stop links and pre-computed
+# transit travel times (hkg:travelTimeMinutes between stops).
+#
+# Produces triples of the form:
+#   hkgr:facility/KA001  hkg:reachableIn15min  hkgr:district/AT-9-01
+#   hkgr:facility/KA001  hkg:reachableIn30min  hkgr:district/AT-9-01
+#   hkgr:facility/KA001  hkg:reachableIn60min  hkgr:district/AT-9-01
+#
+# ------------------------------------------------------------------
+# Rule R1: district is reachable within 15 minutes (direct connection)
+# ------------------------------------------------------------------
+PREFIX hkg:  <http://healthcare-kg.at/ontology#>
+PREFIX hkgr: <http://healthcare-kg.at/resource/>
+PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
+
+INSERT {
+    ?facility hkg:reachableIn15min ?district .
+}
+WHERE {
+    ?facility   a               hkg:HealthcareFacility ;
+                hkg:nearestStop ?facilityStop ;
+                hkg:inDistrict  ?facilityDistrict .
+
+    ?district   a               hkg:District .
+
+    ?districtStop hkg:inDistrict ?district .
+
+    # Transit leg: direct connection between stops within 15 min
+    ?facilityStop hkg:transitConnectionTo ?districtStop ;
+                  hkg:travelTimeMinutes   ?transitTime ;
+                  hkg:transferCount       ?transfers .
+
+    FILTER (?transferCount <= 1)
+    FILTER (
+        (?transitTime
+         + ?facilityStop_walkMins
+         + ?districtStop_walkMins
+        ) <= 15.0
+    )
+}
+
+# ------------------------------------------------------------------
+# Rule R2: reachableIn30min
+# ------------------------------------------------------------------
+INSERT {
+    ?facility hkg:reachableIn30min ?district .
+}
+WHERE {
+    ?facility   a               hkg:HealthcareFacility ;
+                hkg:nearestStop ?facilityStop ;
+                hkg:inDistrict  ?facilityDistrict .
+
+    ?district   a               hkg:District .
+    ?districtStop hkg:inDistrict ?district .
+
+    ?facilityStop hkg:transitConnectionTo ?districtStop ;
+                  hkg:travelTimeMinutes   ?transitTime ;
+                  hkg:transferCount       ?transfers .
+
+    FILTER (?transfers <= 1)
+    FILTER (?transitTime <= 30.0)
+}
+
+# ------------------------------------------------------------------
+# Rule R3: reachableIn60min
+# ------------------------------------------------------------------
+INSERT {
+    ?facility hkg:reachableIn60min ?district .
+}
+WHERE {
+    ?facility   a               hkg:HealthcareFacility ;
+                hkg:nearestStop ?facilityStop ;
+                hkg:inDistrict  ?facilityDistrict .
+
+    ?district   a               hkg:District .
+    ?districtStop hkg:inDistrict ?district .
+
+    ?facilityStop hkg:transitConnectionTo ?districtStop ;
+                  hkg:travelTimeMinutes   ?transitTime ;
+                  hkg:transferCount       ?transfers .
+
+    FILTER (?transfers <= 1)
+    FILTER (?transitTime <= 60.0)
+}

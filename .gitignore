@@ -1,0 +1,18 @@
+# Data (zu groß / regenerierbar)
+data/raw/
+data/rdf/
+data/processed/
+models/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/

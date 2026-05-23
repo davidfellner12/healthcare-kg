@@ -1,0 +1,51 @@
+# =============================================================
+# Healthcare KG - Python Dependencies
+# 
+# WINDOWS USERS: Do NOT use this file directly with pip install -r
+# Instead run:  install.bat
+# (torch must be installed BEFORE torch-geometric/torch-scatter)
+#
+# LINUX/MAC: Run install.sh instead
+# =============================================================
+
+# ── Core ──────────────────────────────────────────────────────
+rdflib>=7.0.0
+pyparsing==3.1.1          # pin: newer versions break rdflib SPARQL BIND
+requests>=2.31.0
+pandas>=2.0.0
+numpy>=1.24.0
+shapely>=2.0.0
+pyproj>=3.6.0
+
+# ── API ───────────────────────────────────────────────────────
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# ── Visualisation / Notebooks ─────────────────────────────────
+folium>=0.15.0
+matplotlib>=3.8.0
+seaborn>=0.13.0
+ipykernel>=6.25.0
+jupyter>=1.0.0
+
+# ── ML Utilities ──────────────────────────────────────────────
+scikit-learn>=1.3.0
+tqdm>=4.66.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+
+# ── PyTorch (install FIRST, before pykeen/torch-geometric) ────
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.1.0
+
+# ── KG Embeddings: TransE via PyKEEN ──────────────────────────
+# pip install pykeen
+pykeen>=1.10.0
+
+# ── GNN: GraphSAGE via PyTorch Geometric ──────────────────────
+# pip install torch_geometric
+# pip install torch_scatter torch_sparse -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
+torch-geometric>=2.4.0
+
+# ── Optional (not strictly required) ─────────────────────────
+# geopandas>=0.14.0   # install separately if needed
