@@ -41,8 +41,16 @@ def extract_triples_from_rdf() -> list:
     HKG  = Namespace(NAMESPACES["hkg"])
     HKGR = Namespace(NAMESPACES["hkgr"])
 
+    # gtfs_transit.ttl is excluded here: its ~4,900 individual stop/route
+    # entities are singletons under RELEVANT_PREDICATES (only rdf:type +
+    # rdfs:label edges), so including them starves PyKEEN's train/val/test
+    # entity-coverage split without adding any link-prediction signal.
+    # The facility<->stop connection that matters (nearestStop) already
+    # comes from facility_stop_links.ttl.
     g = Graph()
     for ttl in RDF_DIR.glob("*.ttl"):
+        if ttl.name == "gtfs_transit.ttl":
+            continue
         log.info(f"  Loading {ttl.name}")
         g.parse(str(ttl), format="turtle")
 
@@ -137,8 +145,9 @@ def train_transe(tf):
 
         # Log key metrics
         metrics = result.metric_results.to_dict()
-        log.info(f"  Hits@10: {metrics.get('both.realistic.hits_at_10', 'N/A'):.4f}")
-        log.info(f"  MRR:     {metrics.get('both.realistic.inverse_harmonic_mean_rank', 'N/A'):.4f}")
+        realistic = metrics.get("both", {}).get("realistic", {})
+        log.info(f"  Hits@10: {realistic.get('hits_at_10', float('nan')):.4f}")
+        log.info(f"  MRR:     {realistic.get('inverse_harmonic_mean_rank', float('nan')):.4f}")
 
         return result
 

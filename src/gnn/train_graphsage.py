@@ -38,6 +38,47 @@ MODEL_DIR = MODELS_DIR / "graphsage"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 
+class GraphSAGE:
+    """
+    Lazily-defined at import time via _make_graphsage_class() once torch is
+    available -- see module bottom. Placeholder so `from ... import GraphSAGE`
+    resolves even before training has run in this process.
+    """
+    pass
+
+
+def _make_graphsage_class():
+    """Build the real torch.nn.Module GraphSAGE class (needs torch + PyG)."""
+    import torch
+    import torch.nn.functional as F
+    from torch_geometric.nn import SAGEConv
+    from config.settings import GRAPHSAGE_CONFIG as cfg
+
+    class _GraphSAGE(torch.nn.Module):
+        def __init__(self, in_ch, hidden_ch, out_ch=1, num_layers=2, dropout=0.3):
+            super().__init__()
+            self.convs = torch.nn.ModuleList()
+            self.convs.append(SAGEConv(in_ch, hidden_ch, aggr=cfg["aggr"]))
+            for _ in range(num_layers - 2):
+                self.convs.append(SAGEConv(hidden_ch, hidden_ch, aggr=cfg["aggr"]))
+            self.convs.append(SAGEConv(hidden_ch, out_ch, aggr=cfg["aggr"]))
+            self.dropout = dropout
+
+        def forward(self, x, edge_index):
+            for conv in self.convs[:-1]:
+                x = conv(x, edge_index).relu()
+                x = F.dropout(x, p=self.dropout, training=self.training)
+            return self.convs[-1](x, edge_index).squeeze(-1).sigmoid()
+
+    return _GraphSAGE
+
+
+try:
+    GraphSAGE = _make_graphsage_class()
+except ImportError:
+    pass  # torch / torch_geometric not installed; placeholder class stays
+
+
 def build_node_features() -> dict:
     """
     Build node feature matrices for districts, facilities, stops.
@@ -147,23 +188,9 @@ def train_graphsage(node_data: dict, edge_data: dict) -> dict:
         data = Data(x=X, edge_index=edge_index, y=y,
                     train_mask=train_mask, val_mask=val_mask, test_mask=test_mask)
 
-        # ── GraphSAGE model ──────────────────────────────────────────────────
-        class GraphSAGE(torch.nn.Module):
-            def __init__(self, in_ch, hidden_ch, out_ch=1, num_layers=2, dropout=0.3):
-                super().__init__()
-                self.convs = torch.nn.ModuleList()
-                self.convs.append(SAGEConv(in_ch, hidden_ch, aggr=cfg["aggr"]))
-                for _ in range(num_layers - 2):
-                    self.convs.append(SAGEConv(hidden_ch, hidden_ch, aggr=cfg["aggr"]))
-                self.convs.append(SAGEConv(hidden_ch, out_ch, aggr=cfg["aggr"]))
-                self.dropout = dropout
-
-            def forward(self, x, edge_index):
-                for i, conv in enumerate(self.convs[:-1]):
-                    x = conv(x, edge_index).relu()
-                    x = F.dropout(x, p=self.dropout, training=self.training)
-                return self.convs[-1](x, edge_index).squeeze(-1).sigmoid()
-
+        # GraphSAGE model class is defined once at module level (see
+        # _make_graphsage_class above) so predict_risk_scores.py can import
+        # and reload it for what-if inference without retraining.
         model = GraphSAGE(
             in_ch=X.shape[1],
             hidden_ch=cfg["hidden_channels"],
