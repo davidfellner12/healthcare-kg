@@ -41,23 +41,48 @@ def transe_loss():
 
 
 def graphsage_fit():
+    """
+    Scatter of predicted vs. true vulnerability score, one point per
+    district, against the y=x "perfect prediction" line. This replaces an
+    earlier version (both series plotted against a district-ID x-axis with
+    50 tiny tick labels) that was hard to read at a glance -- a scatter
+    against the diagonal is the standard way to show model fit and needs no
+    per-district labels to be immediately interpretable, while still
+    calling out the districts a reader would actually want to identify.
+    """
+    import pandas as pd
     preds = json.load(open(ROOT / "models" / "graphsage" / "risk_scores.json", encoding="utf-8"))
-    preds = sorted(preds, key=lambda p: p["true_score"])
-    ids = [p["district_id"] for p in preds]
+    demo = pd.read_csv(ROOT / "data" / "raw" / "demographics.csv").set_index("district_id")
+    mae = json.load(open(ROOT / "models" / "graphsage" / "metrics.json", encoding="utf-8"))["test_mae"]
+
     true = [p["true_score"] for p in preds]
     pred = [p["predicted_risk_score"] for p in preds]
+    lo, hi = min(true + pred) - 0.02, max(true + pred) + 0.02
 
-    fig, ax = plt.subplots(figsize=(11, 4.2))
-    x = range(len(ids))
-    ax.plot(x, true, "o-", color="#1a365d", label="True vulnerability score", markersize=3, linewidth=1)
-    ax.plot(x, pred, "o-", color="#e53e3e", label="GraphSAGE prediction", markersize=3, linewidth=1, alpha=0.85)
-    ax.set_xticks(list(x)[::2])
-    ax.set_xticklabels([ids[i] for i in x][::2], rotation=90, fontsize=6)
-    ax.set_ylabel("Vulnerability score [0,1]")
-    ax.set_title(f"GraphSAGE prediction vs. true vulnerability score, all {len(ids)} districts "
-                 f"(test MAE = {json.load(open(ROOT/'models'/'graphsage'/'metrics.json', encoding='utf-8'))['test_mae']:.4f})")
-    ax.legend(loc="upper left", fontsize=8)
-    ax.grid(alpha=0.2)
+    fig, ax = plt.subplots(figsize=(6.8, 6.2))
+    ax.plot([lo, hi], [lo, hi], "--", color="#a0aec0", linewidth=1.3, label="Perfect prediction (y = x)")
+    ax.scatter(true, pred, s=42, color="#1a365d", alpha=0.75, zorder=3, label="District")
+
+    # Label the 3 highest and 1 lowest true-vulnerability districts by name,
+    # so a reader can immediately tie the scatter back to real places.
+    # Offsets are staggered manually because the 3 highest districts sit
+    # close together in one corner and would otherwise overlap.
+    by_true = sorted(preds, key=lambda p: p["true_score"], reverse=True)
+    to_label = [(by_true[0], (8, 10)), (by_true[1], (8, -4)), (by_true[2], (8, -18)),
+                (by_true[-1], (8, 4))]
+    for p, offset in to_label:
+        name = str(demo.loc[p["district_id"], "name"]).split(",")[-1].strip() or p["district_id"]
+        ax.annotate(f"{name} ({p['district_id']})", (p["true_score"], p["predicted_risk_score"]),
+                    textcoords="offset points", xytext=offset, fontsize=8, color="#2d3748")
+
+    ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
+    ax.set_xlabel("True vulnerability score (rule-computed, Section 4.1)")
+    ax.set_ylabel("GraphSAGE-predicted vulnerability score")
+    ax.set_title(f"GraphSAGE prediction accuracy, all {len(preds)} districts\n"
+                 f"(test MAE = {mae:.4f} on a [0,1]-scaled score)")
+    ax.legend(loc="upper left", fontsize=9)
+    ax.set_aspect("equal")
+    ax.grid(alpha=0.25)
     fig.tight_layout()
     fig.savefig(FIG / "graphsage_fit.png")
     plt.close(fig)
@@ -65,31 +90,66 @@ def graphsage_fit():
 
 
 def graphsage_whatif():
+    """
+    Before/after bars for the what-if scenario, redesigned for a
+    non-technical reader: full district names instead of just IDs, a
+    zoomed y-axis so the actual before/after difference is visible as a
+    bar-height change (a 0-based axis made both bars look identical), and
+    an explicit second panel giving the same two bars on the full [0,1]
+    scale for honest context -- a reader gets both "yes, it moved" and
+    "here is how small that move is against the full range" without either
+    view hiding the other.
+    """
     from src.gnn.predict_risk_scores import what_if_analysis
     demo = pd.read_csv(ROOT / "data" / "raw" / "demographics.csv")
     demo["gp_per_1000"] = demo["gp_count"] / demo["population"] * 1000
+    all_preds = json.load(open(ROOT / "models" / "graphsage" / "risk_scores.json", encoding="utf-8"))
+    score_lo = min(p["true_score"] for p in all_preds)
+    score_hi = max(p["true_score"] for p in all_preds)
+
     targets = demo.nsmallest(2, "gp_per_1000")["district_id"].tolist()
     results = [what_if_analysis(d, new_gp_count=2) for d in targets]
-
-    fig, ax = plt.subplots(figsize=(5.5, 3.4))
-    x = range(len(results))
-    width = 0.35
+    names = {r["district_id"]: str(demo.set_index("district_id").loc[r["district_id"], "name"])
+             for r in results}
+    labels = [f"{names[r['district_id']]}\n({r['district_id']})" for r in results]
     baseline = [r["baseline_risk_score"] for r in results]
     modified = [r["modified_risk_score"] for r in results]
-    labels = [r["district_id"] for r in results]
-    ax.bar([i - width / 2 for i in x], baseline, width, label="Baseline", color="#274472")
-    ax.bar([i + width / 2 for i in x], modified, width, label="+2 GPs", color="#38a169")
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9.5, 4.6), gridspec_kw={"width_ratios": [1.3, 1]})
+    x = range(len(results))
+    width = 0.32
+
+    # Left panel: zoomed in, so the actual change is visible.
+    zoom_lo = min(baseline + modified) - 0.006
+    zoom_hi = max(baseline + modified) + 0.012
+    ax1.bar([i - width / 2 for i in x], baseline, width, label="Baseline", color="#274472", zorder=3)
+    ax1.bar([i + width / 2 for i in x], modified, width, label="After adding 2 GPs", color="#38a169", zorder=3)
     for i, r in enumerate(results):
-        ax.annotate(f"{r['delta']:+.4f}", (i, max(r['baseline_risk_score'], r['modified_risk_score']) + 0.005),
-                    ha="center", fontsize=8)
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(labels)
-    ax.set_ylabel("Predicted vulnerability score")
-    ax.set_title("What-if: predicted vulnerability before/after adding 2 GPs\n(2 most GP-deficit districts)")
-    ax.legend()
-    ax.grid(alpha=0.2, axis="y")
+        pct = 100 * r["delta"] / r["baseline_risk_score"]
+        top = max(r["baseline_risk_score"], r["modified_risk_score"])
+        ax1.annotate(f"{r['delta']:+.4f} ({pct:+.2f}%)", (i, top + (zoom_hi - zoom_lo) * 0.03),
+                     ha="center", fontsize=8.5, fontweight="bold", color="#1a202c")
+    ax1.set_xticks(list(x)); ax1.set_xticklabels(labels, fontsize=9.5)
+    ax1.set_ylim(zoom_lo, zoom_hi)
+    ax1.set_ylabel("Predicted vulnerability score (zoomed in)")
+    ax1.set_title("The change itself", fontsize=10)
+    ax1.legend(loc="upper right", fontsize=8)
+    ax1.grid(alpha=0.2, axis="y", zorder=0)
+
+    # Right panel: same bars on the full [0,1]-relevant scale, for context.
+    ax2.axhspan(score_lo, score_hi, color="#edf2f7", zorder=0)
+    ax2.bar([i - width / 2 for i in x], baseline, width, color="#274472", zorder=3)
+    ax2.bar([i + width / 2 for i in x], modified, width, color="#38a169", zorder=3)
+    ax2.set_xticks(list(x)); ax2.set_xticklabels([r["district_id"] for r in results], fontsize=9.5)
+    ax2.set_ylim(0, 0.7)
+    ax2.set_ylabel("Same bars, full scale")
+    ax2.set_title(f"In context (shaded = full\nacross-district range\n"
+                  f"{score_lo:.2f}–{score_hi:.2f})", fontsize=10)
+    ax2.grid(alpha=0.2, axis="y", zorder=0)
+
+    fig.suptitle("What-if: adding 2 GPs to the 2 most GP-deficit districts", fontsize=12, y=1.02)
     fig.tight_layout()
-    fig.savefig(FIG / "graphsage_whatif.png")
+    fig.savefig(FIG / "graphsage_whatif.png", bbox_inches="tight")
     plt.close(fig)
     print("graphsage_whatif.png", results)
 

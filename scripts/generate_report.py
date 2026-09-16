@@ -54,7 +54,8 @@ top3 = sorted(transe_preds, key=lambda r: r["score_high_risk"], reverse=True)[:3
 
 # District ID -> name/state/risk lookup, built live from the actual ingested
 # data (not hardcoded), so every AT-9-xx / AT-4-xx / AT-7-xx code used
-# throughout this report can be resolved in one place (Appendix D).
+# throughout this report can be resolved in one place. Rendered as a table
+# early in Section 2.1, right before those IDs start appearing everywhere.
 def _load_district_lookup():
     import pandas as pd
     from rdflib import Graph, Namespace
@@ -425,8 +426,17 @@ def build_sections():
           "capital's real main train station as a single labelled \"illustrative hub\" stop "
           "(<font face='Courier'>gtfs_ingestion.py</font>) &mdash; real station coordinates, but not "
           "from a live-parsed timetable. Section 3.3 quantifies what that gap costs the KG. "
-          "Appendix D resolves every district ID used in this report (e.g. AT-4-09) to its name, "
-          "state and risk classification.", "BodySmall"),
+          "The table below resolves every district ID used in this report (e.g. AT-4-09) to its "
+          "name, state and risk classification, before those IDs start appearing throughout "
+          "Sections 3-5.", "BodySmall"),
+
+        Marker("sec_district_table"),
+        p("District ID Reference", "H2"),
+        p("Every district ID used in this report, resolved to its name, state, population and "
+          "V1&ndash;V4-materialised risk classification (computed in Section 4.1), read live from "
+          "the ingested data rather than hardcoded. Referenced throughout as e.g. AT-4-09.", "Body"),
+        _district_table(),
+        PageBreak(),
 
         Marker("sec2_2"),
         p("2.2 Technologies (LO5)", "H2"),
@@ -841,6 +851,50 @@ def build_sections():
           "(e.g. only ever proposing <font face='Courier'>accessRisk</font> values, never a district as "
           "its own transit target) &mdash; exactly the kind of ML-representation accuracy improvement "
           "via logical constraints the course points at.", "Body"),
+
+        Marker("sec5_4"),
+        p("5.4 What the vulnerability score actually means", "H2"),
+        p("Sections 3-4 have used \"vulnerability score\" throughout without stopping to say, plainly, "
+          "what the number is and is not &mdash; worth closing on explicitly, since a policymaker "
+          "reading only the headline figure could easily over-interpret it.", "Body"),
+        ListFlowable([
+            ListItem(p("<b>It is a weighted composite index, not a measured outcome.</b> It is "
+                       "0.40&times;(elderly share) + 0.20&times;(under-5 share) + 0.25&times;(1 &minus; "
+                       "car ownership) + 0.15&times;(1 &minus; income/&euro;50k), each sub-term "
+                       "clamped to [0,1] (Section 4, rule V-set). It is not a probability of being "
+                       "underserved, not a count of affected residents, and not derived from any "
+                       "observed health outcome &mdash; a caveat already raised in Section 3.3, worth "
+                       "restating here because it is the number a non-technical reader is most likely "
+                       "to see in isolation.")),
+            ListItem(p(f"<b>Its observed range in this data is "
+                       f"{min(r['vuln'] for r in district_lookup):.3f}&ndash;"
+                       f"{max(r['vuln'] for r in district_lookup):.3f}.</b> The lowest, Urfahr-Umgebung "
+                       "(Oberösterreich), combines a young population, high car ownership and the "
+                       "highest median income in the dataset; the highest, Leopoldstadt (Wien), combines "
+                       "low car ownership and low income despite above-average GP access (Section 3.1). "
+                       "A useful rule of thumb for this specific dataset: differences below about 0.02 "
+                       "(roughly the GraphSAGE test MAE, Section 3.1) are within the model's own "
+                       "measurement noise and should not be read as a meaningful ranking difference.")),
+            ListItem(p("<b>It is a relative prioritisation device, not an absolute accessibility "
+                       "measure.</b> \"0.53\" means nothing on its own; \"the 6th-highest of 50\" or "
+                       "\"above the median for Tirol\" does. This is exactly why the KG exposes the "
+                       "score through <font face='Courier'>/api/underserved</font> and a generic "
+                       "<font face='Courier'>/api/sparql</font> endpoint (Section 1.2, 5.1) rather than "
+                       "publishing a static leaderboard: the useful comparison changes depending on the "
+                       "decision being made (state budget allocation vs. a single new clinic's "
+                       "catchment area), so the ranking needs to be re-queryable, not fixed.")),
+            ListItem(p("<b>The score alone hides <i>why</i> a district is high, and that matters more "
+                       "than the number itself for deciding what to do.</b> Section 3.1's central "
+                       "finding is that two districts with a similar score can be high for opposite "
+                       "reasons &mdash; a genuine GP shortage in alpine Tirol vs. low car-ownership/"
+                       "income in inner Vienna &mdash; and those call for entirely different "
+                       "interventions (subsidise a rural GP practice vs. improve local transit or "
+                       "income support). A reader acting on this KG should treat the vulnerability "
+                       "score as a screening trigger to open up the underlying "
+                       "<font face='Courier'>gpPer1000</font>/<font face='Courier'>carOwnershipPct</font>/"
+                       "<font face='Courier'>medianIncome</font> facts (all independently queryable via "
+                       "SPARQL) for the flagged district, never as a number to act on by itself.")),
+        ], bulletType="bullet", leftIndent=14),
         PageBreak(),
     ]
 
@@ -929,12 +983,6 @@ def build_sections():
             "  (commit \"Run and fix the ML/GNN pipeline end-to-end, add report + submission ZIP\n"
             "  generators\")."
         ),
-
-        p("Appendix D &mdash; District ID Reference", "H1"),
-        p("Every district ID used throughout this report (e.g. AT-4-09), resolved to its name, "
-          "state, population and V1&ndash;V4-materialised risk classification (Section 4.1), read "
-          "live from the ingested data rather than hardcoded.", "Body"),
-    ] + [_district_table()] + [
     ]
     return story
 
