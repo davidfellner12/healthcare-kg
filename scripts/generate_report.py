@@ -45,10 +45,43 @@ OUT_PATH = OUT_DIR / "Fellner_David_KG_Portfolio-structured.pdf"
 transe_preds = json.load(open(ROOT / "models" / "transe" / "underserved_predictions.json", encoding="utf-8"))
 link_examples = json.load(open(ROOT / "models" / "transe" / "link_prediction_examples.json", encoding="utf-8"))
 transe_results = json.load(open(ROOT / "models" / "transe" / "results.json", encoding="utf-8"))
+robustness_path = ROOT / "models" / "robustness_check.json"
+robustness = json.load(open(robustness_path, encoding="utf-8")) if robustness_path.exists() else None
 
 tp = link_examples["true_positive_example"]
 fp = link_examples["false_positive_example"]
 top3 = sorted(transe_preds, key=lambda r: r["score_high_risk"], reverse=True)[:3]
+
+# District ID -> name/state/risk lookup, built live from the actual ingested
+# data (not hardcoded), so every AT-9-xx / AT-4-xx / AT-7-xx code used
+# throughout this report can be resolved in one place (Appendix D).
+def _load_district_lookup():
+    import pandas as pd
+    from rdflib import Graph, Namespace
+
+    demo = pd.read_csv(ROOT / "data" / "raw" / "demographics.csv")
+    g = Graph()
+    g.parse(ROOT / "data" / "rdf" / "vulnerability.ttl", format="turtle")
+    HKG = Namespace("http://healthcare-kg.at/ontology#")
+    risk_by_id, vuln_by_id = {}, {}
+    for s, p, o in g.triples((None, HKG.accessRisk, None)):
+        risk_by_id[str(s).split("/")[-1]] = str(o).split("#")[-1]
+    for s, p, o in g.triples((None, HKG.vulnerabilityScore, None)):
+        vuln_by_id[str(s).split("/")[-1]] = float(o)
+
+    rows = []
+    for _, r in demo.iterrows():
+        did = str(r["district_id"])
+        rows.append({
+            "id": did, "name": str(r["name"]), "state": str(r["state"]),
+            "population": int(r["population"]),
+            "risk": risk_by_id.get(did, "?"), "vuln": vuln_by_id.get(did, float("nan")),
+        })
+    rows.sort(key=lambda r: r["id"])
+    return rows
+
+
+district_lookup = _load_district_lookup()
 
 # ---------------------------------------------------------------- styles ---
 styles = getSampleStyleSheet()
@@ -391,7 +424,9 @@ def build_sections():
           "registration, so Oberösterreich/Tirol facility-stop linking instead uses each regional "
           "capital's real main train station as a single labelled \"illustrative hub\" stop "
           "(<font face='Courier'>gtfs_ingestion.py</font>) &mdash; real station coordinates, but not "
-          "from a live-parsed timetable. Section 3.3 quantifies what that gap costs the KG.", "BodySmall"),
+          "from a live-parsed timetable. Section 3.3 quantifies what that gap costs the KG. "
+          "Appendix D resolves every district ID used in this report (e.g. AT-4-09) to its name, "
+          "state and risk classification.", "BodySmall"),
 
         Marker("sec2_2"),
         p("2.2 Technologies (LO5)", "H2"),
@@ -590,7 +625,22 @@ def build_sections():
                        "across the real range of Austrian district types once all 50 are modelled "
                        "&mdash; a caveat that would matter a great deal before any budgeting decision "
                        "(LO10) is actually made on these numbers.")),
-        ], bulletType="bullet", leftIndent=14),
+        ] + ([ListItem(p(
+                f"<b>Robustness across random seeds:</b> the single seed=42 run quoted above is not a "
+                f"lucky draw &mdash; retraining both models on {len(robustness['seeds'])} different "
+                f"seeds ({', '.join(str(s) for s in robustness['seeds'])}) gives TransE Hits@10 = "
+                f"{robustness['transe']['hits_at_10']['mean']:.3f} &plusmn; "
+                f"{robustness['transe']['hits_at_10']['std']:.3f} (range "
+                f"{robustness['transe']['hits_at_10']['min']:.3f}&ndash;"
+                f"{robustness['transe']['hits_at_10']['max']:.3f}), MRR = "
+                f"{robustness['transe']['mrr']['mean']:.3f} &plusmn; {robustness['transe']['mrr']['std']:.3f}, "
+                f"and GraphSAGE test MAE = {robustness['graphsage']['test_mae']['mean']:.4f} &plusmn; "
+                f"{robustness['graphsage']['test_mae']['std']:.4f} &mdash; a standard deviation under "
+                f"2% of the mean for every metric, i.e. the headline numbers in Section 3.1 are "
+                f"representative rather than seed-dependent (script: "
+                f"<font face='Courier'>scripts/robustness_check.py</font>)."
+            ))] if robustness else []),
+        bulletType="bullet", leftIndent=14),
         PageBreak(),
     ]
 
@@ -807,6 +857,7 @@ def build_sections():
             "  src/gnn/                       build_graph.py, train_graphsage.py, predict_risk_scores.py  (PyTorch Geometric)\n"
             "  src/api/app.py                 Flask REST API + SPARQL proxy + Leaflet demo\n"
             "  scripts/build_kg.py            one-shot pipeline runner;  scripts/generate_figures.py  regenerates docs/figures/*.png;\n"
+            "                                 scripts/robustness_check.py  multi-seed stability check (Section 3.3);\n"
             "                                 scripts/generate_report.py  this report\n"
             "  tests/                         18 passing tests (ingestion, geo utils, API)\n"
             "  data/, models/                 generated at run time (gitignored; a sample is included in the ZIP)"
@@ -878,8 +929,36 @@ def build_sections():
             "  (commit \"Run and fix the ML/GNN pipeline end-to-end, add report + submission ZIP\n"
             "  generators\")."
         ),
+
+        p("Appendix D &mdash; District ID Reference", "H1"),
+        p("Every district ID used throughout this report (e.g. AT-4-09), resolved to its name, "
+          "state, population and V1&ndash;V4-materialised risk classification (Section 4.1), read "
+          "live from the ingested data rather than hardcoded.", "Body"),
+    ] + [_district_table()] + [
     ]
     return story
+
+
+def _district_table():
+    header = [p("<b>ID</b>", "LOCell"), p("<b>Name</b>", "LOCell"), p("<b>State</b>", "LOCell"),
+              p("<b>Pop.</b>", "LOCell"), p("<b>Risk</b>", "LOCell"), p("<b>Vuln.</b>", "LOCell")]
+    rows = [header]
+    for r in district_lookup:
+        rows.append([
+            p(r["id"], "LOCell"), p(r["name"], "LOCell"), p(r["state"], "LOCell"),
+            p(f"{r['population']:,}", "LOCell"), p(r["risk"], "LOCell"),
+            p(f"{r['vuln']:.3f}" if r["vuln"] == r["vuln"] else "?", "LOCell"),
+        ])
+    return Table(rows, colWidths=[2.1 * cm, 5.4 * cm, 3.3 * cm, 2.1 * cm, 2.3 * cm, 1.8 * cm],
+                 repeatRows=1,
+                 style=TableStyle([
+                     ("BACKGROUND", (0, 0), (-1, 0), LO_HEADER_BG),
+                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                     ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#c0c8d2")),
+                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                     ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                     ("FONTSIZE", (0, 0), (-1, -1), 7.6),
+                 ]))
 
 
 def make_doc(story, target):

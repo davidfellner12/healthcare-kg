@@ -47,11 +47,11 @@ for f in ["src/ingestion", "src/utils", "src/reasoning/load_triplestore.py",
     copy(f, f"2 - construction/{f}")
 
 # ---- "3 - ML": embeddings + GNN code and their (small) outputs -----------
-for f in ["src/embeddings", "src/gnn",
+for f in ["src/embeddings", "src/gnn", "scripts/robustness_check.py",
           "models/transe/results.json", "models/transe/metadata.json",
           "models/transe/underserved_predictions.json", "models/transe/link_prediction_examples.json",
           "models/graphsage/metrics.json", "models/graphsage/risk_scores.json",
-          "models/graphsage/graph_stats.json", "docs/figures"]:
+          "models/graphsage/graph_stats.json", "models/robustness_check.json", "docs/figures"]:
     copy(f, f"3 - ML/{f}")
 
 # ---- "4 - logic": SPARQL rules, reasoning script, KG evolution ----------
