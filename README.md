@@ -193,18 +193,20 @@ healthcare-kg/
 
 ## Data Sources
 
-| Source | Format | URL |
-|--------|--------|-----|
-| Gesundheit Österreich (GÖG) | CSV/JSON | https://www.goeg.at / data.gv.at |
-| Wiener Linien GTFS | GTFS ZIP | https://www.wienerlinien.at/ogd_realtime/doku/ |
-| ÖBB GTFS | GTFS ZIP | https://data.oebb.at |
-| Statistik Austria Districts | CSV | https://www.statistik.at |
+| Source | Format | Status |
+|--------|--------|--------|
+| Wiener Linien GTFS | GTFS ZIP | **Real, live-downloaded**: https://www.wienerlinien.at/ogd_realtime/doku/ogd/gtfs/gtfs.zip (4,268 stops, 693 routes) |
+| Gesundheit Österreich (GÖG) | CSV/JSON | Live endpoint (data.gv.at) returns 404 from this environment; falls back to `SAMPLE_HOSPITALS` in `src/ingestion/healthcare_ingestion.py` — 87 facilities: 17 real, named hospitals at real approximate coordinates, plus 50 GPs (one per modelled district) and 20 pharmacies with fictional practitioners/names at realistic locations |
+| ÖBB GTFS | GTFS ZIP | Requires registration, unavailable in this environment; Oberösterreich/Tirol facility-stop linking instead uses each regional capital's real main train station as a labelled illustrative "hub" stop (`gtfs_ingestion.py`) |
+| Statistik Austria Districts | CSV | Regional-statistics download requires an account; falls back to `SAMPLE_DISTRICTS` in `src/ingestion/demographics_ingestion.py` — all 50 official political districts of Wien (23) / Oberösterreich (18) / Tirol (9), with real names/numbering/coordinates but internally-consistent illustrative demographic values (not exact official figures) |
+
+See `docs/figures/` and the portfolio report (Section 2.1) for the full honesty framing and the resulting findings.
 
 ---
 
 ## Scope
 
-- **Geographic focus**: Austria — with emphasis on Vienna, Upper Austria (OÖ), and Tyrol
+- **Geographic focus**: full coverage of all political districts of Vienna, Upper Austria (OÖ), and Tyrol (50 districts, ~4.16M modelled population vs. Austria's real ~4.2M for these three states)
 - **Transit**: Direct + single-transfer connections (full multi-modal is stretch goal)
 - **Embeddings**: PyKEEN (TransE) and PyTorch Geometric (GraphSAGE) — no custom architectures
 - **API**: Lightweight Flask; production hardening out of scope

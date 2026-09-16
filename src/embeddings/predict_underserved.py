@@ -198,12 +198,18 @@ def predict_underserved_districts(top_k: int = 16) -> tuple:
 
     tp, fp, test_examples = held_out_test_examples(model, tf)
 
+    # NOTE: encoding="utf-8" is required here, not just ensure_ascii=False --
+    # without it, open()'s default encoding on Windows is the system locale
+    # (cp1252), which silently mis-encodes non-ASCII district names (e.g.
+    # "Oberösterreich") into bytes that aren't valid UTF-8, breaking any
+    # UTF-8 JSON reader (including this same script re-reading its own
+    # output on a different machine/locale).
     out1 = MODEL_DIR / "underserved_predictions.json"
-    with open(out1, "w") as f:
+    with open(out1, "w", encoding="utf-8") as f:
         json.dump(predictions[:top_k], f, indent=2, ensure_ascii=False)
 
     out2 = MODEL_DIR / "link_prediction_examples.json"
-    with open(out2, "w") as f:
+    with open(out2, "w", encoding="utf-8") as f:
         json.dump({"true_positive_example": tp, "false_positive_example": fp,
                     "held_out_test_examples": test_examples}, f, indent=2, ensure_ascii=False)
 

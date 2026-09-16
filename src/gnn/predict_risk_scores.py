@@ -105,6 +105,15 @@ def what_if_analysis(target_district: str, new_gp_count: int = 1) -> dict:
 
 
 def main():
+    # Windows consoles default stdout to cp1252, which can't encode the
+    # Delta/box-drawing characters below; reconfigure to UTF-8 so this
+    # doesn't crash mid-run (surfaced when scaling from 16 to 50 districts
+    # made this the first script printing a wide results table).
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except AttributeError:
+        pass
+
     log.info("=== GraphSAGE Risk Score Analysis ===")
 
     predictions = load_predictions()
@@ -116,9 +125,22 @@ def main():
             print(f"{p['district_id']:<20}  {p['true_score']:>7.4f}  "
                   f"{p['predicted_risk_score']:>7.4f}  {delta:>+7.4f}")
 
-    # What-if analysis for high-risk rural districts
-    log.info("\nWhat-if Analysis: Adding GPs to Under-served Districts")
-    for district in ["AT-7-07", "AT-4-20"]:
+    # What-if analysis for the two most GP-deficit districts (lowest GPs per
+    # 1,000 residents) -- computed dynamically from the real demographics
+    # data, not hardcoded. This is the more meaningful pair to run "add a
+    # GP" against: the highest *predicted-vulnerability* districts turn out
+    # to be dense, low-income inner-Vienna districts whose vulnerability is
+    # driven mostly by income/car-ownership rather than GP scarcity, so
+    # adding a GP barely moves their score (see Section 3.1's discussion of
+    # this distinction).
+    import pandas as pd
+    from config.settings import RAW_DIR as _RAW_DIR
+    _demo = pd.read_csv(_RAW_DIR / "demographics.csv")
+    _demo["gp_per_1000"] = _demo["gp_count"] / _demo["population"] * 1000
+    top2 = _demo.nsmallest(2, "gp_per_1000")["district_id"].tolist()
+
+    log.info(f"\nWhat-if Analysis: Adding GPs to the {len(top2)} most GP-deficit districts")
+    for district in top2:
         result = what_if_analysis(district, new_gp_count=2)
         print(f"\n  {result}")
 

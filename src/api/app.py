@@ -23,17 +23,6 @@ CORS(app)
 
 FACILITY_TYPES = ["Hospital", "GeneralPractitioner", "Pharmacy"]
 
-DISTRICT_CENTROIDS = {
-    "AT-9-01": (48.2090, 16.3700), "AT-9-02": (48.2200, 16.4100),
-    "AT-9-03": (48.2000, 16.3900), "AT-9-10": (48.1750, 16.3800),
-    "AT-9-11": (48.1700, 16.4200), "AT-9-13": (48.1880, 16.2820),
-    "AT-9-21": (48.2580, 16.3990), "AT-9-23": (48.1550, 16.3090),
-    "AT-4-10": (48.3060, 14.2870), "AT-4-15": (48.1620, 14.0180),
-    "AT-4-18": (48.2500, 14.6500), "AT-4-20": (48.5600, 13.9900),
-    "AT-7-01": (47.2682, 11.3923), "AT-7-02": (47.2600, 11.4500),
-    "AT-7-05": (47.5800, 12.1650), "AT-7-07": (46.8300, 12.7600),
-}
-
 
 @lru_cache(maxsize=1)
 def get_graph():
@@ -139,7 +128,8 @@ def index():
 def list_districts():
     q = """
     PREFIX hkg: <http://healthcare-kg.at/ontology#>
-    SELECT ?district ?name ?risk ?vuln ?gpPer1000 ?pop
+    PREFIX geo: <http://www.w3.org/2003/01/geo/wgs84_pos#>
+    SELECT ?district ?name ?risk ?vuln ?gpPer1000 ?pop ?lat ?lon
     WHERE {
         ?district a hkg:District .
         OPTIONAL { ?district hkg:districtName       ?name . }
@@ -147,13 +137,14 @@ def list_districts():
         OPTIONAL { ?district hkg:vulnerabilityScore ?vuln . }
         OPTIONAL { ?district hkg:gpPer1000          ?gpPer1000 . }
         OPTIONAL { ?district hkg:population         ?pop . }
+        OPTIONAL { ?district geo:lat                ?lat . }
+        OPTIONAL { ?district geo:long               ?lon . }
     }
     """
     rows = run_query(q)
     for r in rows:
         did = r.get("district", "").split("/")[-1]
         r["district_id"] = did
-        r["lat"], r["lon"] = DISTRICT_CENTROIDS.get(did, (None, None))
         r["risk"] = r["risk"].split("#")[-1] if r.get("risk") else None
     return jsonify(rows)
 
@@ -211,12 +202,21 @@ def accessibility(district_id: str):
         for row in run_query(q):
             furi = row.get("fac", "")
             row["type"] = ftype
-            row["reachableIn15min"] = bool(list(g.query(
-                f"ASK {{ <{furi}> <{HKG}reachableIn15min> <{duri}> }}")))
-            row["reachableIn30min"] = bool(list(g.query(
-                f"ASK {{ <{furi}> <{HKG}reachableIn30min> <{duri}> }}")))
-            row["reachableIn60min"] = bool(list(g.query(
-                f"ASK {{ <{furi}> <{HKG}reachableIn60min> <{duri}> }}")))
+            # NOTE: bool(g.query(ask)) reads the ASK result correctly. An
+            # earlier version wrapped it as bool(list(g.query(ask))) instead,
+            # which is always True for an ASK query -- list(result) yields a
+            # single-element list ([True] or [False]) and a non-empty list is
+            # always truthy, so every facility was reported reachable from
+            # every district regardless of the real answer. This surfaced
+            # once districts/facilities covered three states rather than a
+            # small Vienna-only sample, where the bug's effect (every distant
+            # facility marked reachable) became obviously wrong.
+            row["reachableIn15min"] = bool(g.query(
+                f"ASK {{ <{furi}> <{HKG}reachableIn15min> <{duri}> }}"))
+            row["reachableIn30min"] = bool(g.query(
+                f"ASK {{ <{furi}> <{HKG}reachableIn30min> <{duri}> }}"))
+            row["reachableIn60min"] = bool(g.query(
+                f"ASK {{ <{furi}> <{HKG}reachableIn60min> <{duri}> }}"))
             if any([row["reachableIn15min"], row["reachableIn30min"], row["reachableIn60min"]]):
                 results.append(row)
 

@@ -70,22 +70,30 @@ for f in (ROOT / "data" / "rdf").glob("patch_remove_*.sparql"):
 (STAGE / "5 - reflection" / "api_smoke_test_evidence.md").write_text(
     "# Service smoke-test evidence (Section 5.1)\n\n"
     "Endpoints exercised against the live KG (src/api/app.py, duplicated under "
-    "'2 - construction/src/api'):\n\n"
+    "'2 - construction/src/api'), after expanding to the full 50-district / 87-facility KG:\n\n"
     "```\n"
     "GET /api/risk/AT-7-07\n"
-    '[{"gpDeficit": "true", "gpPer1000": "0.375", "name": "Lienz", "pop": "48000", '
-    '"risk": "HighRisk", "vuln": "0.5368"}]\n\n'
+    '[{"gpDeficit": "true", "gpPer1000": "0.4889", "name": "Landeck", "pop": "45000", '
+    '"risk": "HighRisk", "vuln": "0.5317"}]\n\n'
     "GET /api/underserved  (top of ranked list)\n"
-    '[{"district_id": "AT-7-07", "district_name": "Lienz", "predicted_risk": "HighRisk", '
+    '[{"district_id": "AT-7-03", "district_name": "Kufstein", "predicted_risk": "HighRisk", '
     '"actual_risk": "HighRisk", "match": true, ...}, ...]\n\n'
-    "GET /api/accessibility/AT-9-01  (first result)\n"
-    '[{"fac": ".../facility/KA001", "name": "Allgemeines Krankenhaus Wien", '
+    "GET /api/accessibility/AT-9-01  (40 of 87 facilities reachable; first result)\n"
+    '[{"fac": ".../facility/KA001", "name": "Allgemeines Krankenhaus Wien (AKH)", '
     '"reachableIn15min": true, "reachableIn30min": true, "reachableIn60min": true, '
     '"type": "Hospital"}, ...]\n\n'
     "POST /api/sparql  {\"query\": \"PREFIX hkg: <http://healthcare-kg.at/ontology#> "
     "SELECT (COUNT(*) as ?c) WHERE { ?d a hkg:District }\"}\n"
-    '{"count": 1, "results": [{"c": "16"}]}\n'
-    "```\n", encoding="utf-8"
+    '{"count": 1, "results": [{"c": "50"}]}\n'
+    "```\n\n"
+    "Re-running this smoke test after the data expansion (16->50 districts, 11->87 facilities) "
+    "surfaced a real bug in `/api/accessibility`: it read each reachability ASK query's answer via "
+    "`bool(list(g.query(ask)))`, which is always `True` regardless of the actual answer (a "
+    "one-element list is truthy either way), so every facility was reported reachable from every "
+    "district. Invisible at the old small scale (Vienna facilities plausibly are mostly reachable "
+    "from a Vienna district), obvious at the new one (a Tirol hospital reachable from Vienna within "
+    "15 minutes). Fixed to `bool(g.query(ask))`, which reads rdflib's actual ASK answer -- see "
+    "Section 5.1 of the report.\n", encoding="utf-8"
 )
 
 # ---- top level: README, requirements, tests, install scripts ------------
@@ -99,7 +107,7 @@ for f in ["README.md", "requirements.txt", "install.bat", "install.sh", "tests"]
 # repo root, so real execution should happen against this copy instead.)
 full_src = STAGE / "full-source"
 shutil.copytree(ROOT, full_src, dirs_exist_ok=True, ignore=shutil.ignore_patterns(
-    "__pycache__", "*.pyc", ".git", "data", "models", ".idea"))
+    "__pycache__", "*.pyc", ".git", "data", "models", ".idea", ".pytest_cache"))
 (full_src / "data" / "raw").mkdir(parents=True, exist_ok=True)
 (full_src / "data" / "rdf").mkdir(parents=True, exist_ok=True)
 for f in ["data/raw/healthcare_facilities.csv", "data/raw/demographics.csv"]:
@@ -117,8 +125,8 @@ readme.write_text(
     "other via `sys.path` assuming one repo root, so running a script from inside e.g. "
     "`4 - logic/` directly will not find `config/`.\n\n"
     "## What's NOT included, and why\n"
-    "- `data/raw/gtfs_wienerlinien.zip` (65 MB) and the derived `data/rdf/gtfs_transit.ttl` "
-    "(916 KB) are left out of every copy: this is public data with a stable link "
+    "- `data/raw/gtfs_wienerlinien.zip` (67 MB) and the derived `data/rdf/gtfs_transit.ttl` "
+    "(937 KB) are left out of every copy: this is public data with a stable link "
     "(https://www.wienerlinien.at/ogd_realtime/doku/ogd/gtfs/gtfs.zip), cited in the report, "
     "per the guidance that public datasets don't need to be re-shipped. Re-running "
     "`full-source/src/ingestion/gtfs_ingestion.py` re-downloads it.\n"
@@ -142,7 +150,7 @@ readme.write_text(
     "python src/api/app.py                            # http://localhost:5000\n\n"
     "# KG-evolution demo (report Section 4.2):\n"
     "python src/reasoning/kg_evolution.py --event facility_added --id KA999 --lat 48.30 "
-    "--lon 14.29 --type Hospital --district AT-4-10 --name \"Neues Krankenhaus Linz\"\n"
+    "--lon 14.29 --type Hospital --district AT-4-01 --name \"Neues Krankenhaus Linz\"\n"
     "python src/reasoning/kg_evolution.py --event facility_closed --id KA002\n"
     "python src/reasoning/load_triplestore.py --apply-patch data/rdf/patch_remove_KA002_*.sparql\n\n"
     "# Tests:\n"

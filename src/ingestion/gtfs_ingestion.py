@@ -167,6 +167,63 @@ def gtfs_to_rdf(feeds: List[Dict[str, List[Dict]]]) -> Graph:
     return g
 
 
+# Wiener Linien's live GTFS feed only covers Vienna and its immediate
+# surroundings (it is a municipal, not a national, operator) -- so it has no
+# stops anywhere near the Oberösterreich/Tirol facilities this project also
+# models. ÖBB's national feed would cover them but requires registration
+# (see GTFSIngestion above), which is unavailable in this environment. As an
+# honestly-labelled substitute, this adds each OÖ/Tirol regional capital's
+# real main train station as a single illustrative "hub" stop -- real
+# station coordinates, but not sourced from a live-parsed timetable feed --
+# so those regions still get an (approximate) reachability computation
+# instead of silently having none.
+ILLUSTRATIVE_REGIONAL_HUBS = [
+    {"stop_id": "HUB_LINZ",      "stop_lat": 48.2907, "stop_lon": 14.2920, "stop_name": "Linz Hauptbahnhof (illustrative hub)"},
+    {"stop_id": "HUB_WELS",      "stop_lat": 48.1575, "stop_lon": 14.0269, "stop_name": "Wels Hauptbahnhof (illustrative hub)"},
+    {"stop_id": "HUB_STEYR",     "stop_lat": 48.0367, "stop_lon": 14.4116, "stop_name": "Steyr Bahnhof (illustrative hub)"},
+    {"stop_id": "HUB_RIED",      "stop_lat": 48.2073, "stop_lon": 13.4893, "stop_name": "Ried im Innkreis Bahnhof (illustrative hub)"},
+    {"stop_id": "HUB_GMUNDEN",   "stop_lat": 47.9204, "stop_lon": 13.7986, "stop_name": "Gmunden Bahnhof (illustrative hub)"},
+    {"stop_id": "HUB_INNSBRUCK", "stop_lat": 47.2631, "stop_lon": 11.4006, "stop_name": "Innsbruck Hauptbahnhof (illustrative hub)"},
+    {"stop_id": "HUB_KUFSTEIN",  "stop_lat": 47.5828, "stop_lon": 12.1706, "stop_name": "Kufstein Bahnhof (illustrative hub)"},
+    {"stop_id": "HUB_SCHWAZ",    "stop_lat": 47.3517, "stop_lon": 11.7139, "stop_name": "Schwaz Bahnhof (illustrative hub)"},
+    {"stop_id": "HUB_LIENZ",     "stop_lat": 46.8283, "stop_lon": 12.7629, "stop_name": "Lienz Bahnhof (illustrative hub)"},
+]
+
+
+def _cache_stops_csv(feeds: List[Dict[str, List[Dict]]]) -> None:
+    """
+    Cache the real parsed stop coordinates (plus the illustrative OÖ/Tirol
+    regional hubs above) to data/raw/gtfs_stops.csv so downstream scripts
+    (link_facilities_to_stops.py, materialize_reachability.py) can do
+    nearest-stop lookups against the actual GTFS feed instead of a small
+    hardcoded fallback list.
+    """
+    import csv as csv_mod
+    seen = {}
+    for feed_data in feeds:
+        for row in feed_data.get("stops", []):
+            sid = str(row.get("stop_id", ""))
+            try:
+                lat, lon = float(row["stop_lat"]), float(row["stop_lon"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if sid and sid not in seen:
+                seen[sid] = (lat, lon, str(row.get("stop_name", sid)))
+
+    n_real = len(seen)
+    for hub in ILLUSTRATIVE_REGIONAL_HUBS:
+        seen[hub["stop_id"]] = (hub["stop_lat"], hub["stop_lon"], hub["stop_name"])
+
+    out = RAW_DIR / "gtfs_stops.csv"
+    with open(out, "w", newline="", encoding="utf-8") as f:
+        writer = csv_mod.writer(f)
+        writer.writerow(["stop_id", "stop_lat", "stop_lon", "stop_name"])
+        for sid, (lat, lon, name) in seen.items():
+            writer.writerow([sid, lat, lon, name])
+    log.info(f"Cached {n_real} real GTFS stops + {len(ILLUSTRATIVE_REGIONAL_HUBS)} "
+             f"illustrative regional hubs to {out}")
+
+
 def main():
     wl_feed = GTFSIngestion(
         feed_url="https://www.wienerlinien.at/ogd_realtime/doku/ogd/gtfs/gtfs.zip",
@@ -178,6 +235,7 @@ def main():
     )
 
     feeds = [wl_feed.parse(), obb_feed.parse()]
+    _cache_stops_csv(feeds)
     g = gtfs_to_rdf(feeds)
 
     out = RDF_DIR / "gtfs_transit.ttl"

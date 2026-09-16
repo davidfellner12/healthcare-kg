@@ -79,6 +79,14 @@ def extract_triples_from_rdf() -> list:
             tail = str(o).split("/")[-1] if str(o).startswith("http") else str(o)
             triples.append((head, rel, tail))
 
+    # Deterministic order: iterating an rdflib Graph iterates its underlying
+    # set, whose order depends on PYTHONHASHSEED (randomised per process by
+    # default) -- without this sort, PyKEEN's train/val/test split (and
+    # therefore which triples end up held out) silently changed between
+    # otherwise-identical runs despite the fixed random_state, which is
+    # exactly the kind of "reproducible" claim this report makes elsewhere.
+    triples.sort()
+
     log.info(f"Extracted {len(triples)} triples for embedding")
     return triples
 

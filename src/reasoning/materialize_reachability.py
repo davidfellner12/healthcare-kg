@@ -25,7 +25,7 @@ from rdflib import Graph, Namespace, Literal, URIRef
 from rdflib.namespace import RDF, XSD
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from config.settings import RDF_DIR, NAMESPACES, REACHABILITY_THRESHOLDS, VULNERABILITY_WEIGHTS
+from config.settings import RDF_DIR, RAW_DIR, NAMESPACES, REACHABILITY_THRESHOLDS, VULNERABILITY_WEIGHTS
 from src.utils.rdf_utils import load_graph, sparql_query
 from src.utils.geo_utils import haversine_km, walking_time_minutes
 
@@ -51,38 +51,57 @@ def compute_transit_time(fac_lat, fac_lon, stop_lat, stop_lon,
     return walk_mins + transit_mins
 
 
-# ── Approximate district centroids ────────────────────────────────────────────
-DISTRICT_CENTROIDS = {
-    "AT-9-01": (48.2090, 16.3700), "AT-9-02": (48.2200, 16.4100),
-    "AT-9-03": (48.2000, 16.3900), "AT-9-10": (48.1750, 16.3800),
-    "AT-9-11": (48.1700, 16.4200), "AT-9-13": (48.1880, 16.2820),
-    "AT-9-21": (48.2580, 16.3990), "AT-9-23": (48.1550, 16.3090),
-    "AT-4-10": (48.3060, 14.2870), "AT-4-15": (48.1620, 14.0180),
-    "AT-4-18": (48.2500, 14.6500), "AT-4-20": (48.5600, 13.9900),
-    "AT-7-01": (47.2682, 11.3923), "AT-7-02": (47.2600, 11.4500),
-    "AT-7-05": (47.5800, 12.1650), "AT-7-07": (46.8300, 12.7600),
+# ── Small hardcoded fallbacks (only used if the CSVs from the ingestion ------
+# stage are not present, e.g. running this module standalone before any
+# ingestion has run) -----------------------------------------------------------
+_FALLBACK_DISTRICT_CENTROIDS = {
+    "AT-9-01": (48.2082, 16.3738), "AT-9-13": (48.1833, 16.2833),
+    "AT-4-01": (48.3069, 14.2858), "AT-7-01": (47.2682, 11.3923),
 }
-
-FACILITY_DATA = [
+_FALLBACK_FACILITY_DATA = [
     {"id": "KA001", "lat": 48.2196, "lon": 16.3564, "district": "AT-9-01"},
     {"id": "KA002", "lat": 48.1861, "lon": 16.2828, "district": "AT-9-13"},
-    {"id": "KA003", "lat": 48.1600, "lon": 14.0300, "district": "AT-4-15"},
-    {"id": "KA004", "lat": 48.3069, "lon": 14.2858, "district": "AT-4-10"},
-    {"id": "KA005", "lat": 47.2682, "lon": 11.3923, "district": "AT-7-01"},
-    {"id": "GP001", "lat": 48.2083, "lon": 16.3731, "district": "AT-9-01"},
-    {"id": "GP002", "lat": 48.2206, "lon": 16.4134, "district": "AT-9-02"},
-    {"id": "GP003", "lat": 48.3120, "lon": 14.2720, "district": "AT-4-10"},
-    {"id": "GP004", "lat": 47.2650, "lon": 11.4000, "district": "AT-7-01"},
 ]
-
-STOP_DATA = [
+_FALLBACK_STOP_DATA = [
     {"id": "W001", "lat": 48.1851, "lon": 16.3761},
-    {"id": "W002", "lat": 48.1969, "lon": 16.3381},
-    {"id": "W003", "lat": 48.2047, "lon": 16.3861},
-    {"id": "W004", "lat": 48.2361, "lon": 16.3600},
     {"id": "L001", "lat": 48.2907, "lon": 14.2920},
     {"id": "I001", "lat": 47.2631, "lon": 11.4006},
 ]
+
+
+def _load_district_centroids() -> dict:
+    """district_id -> (lat, lon), sourced from demographics.csv when present."""
+    import pandas as pd
+    csv = RAW_DIR / "demographics.csv"
+    if not csv.exists():
+        log.warning("demographics.csv not found; using tiny fallback centroid set")
+        return _FALLBACK_DISTRICT_CENTROIDS
+    df = pd.read_csv(csv)
+    return {str(r["district_id"]): (float(r["lat"]), float(r["lon"])) for _, r in df.iterrows()}
+
+
+def _load_facility_data() -> list:
+    """[{id, lat, lon, district}], sourced from healthcare_facilities.csv when present."""
+    import pandas as pd
+    csv = RAW_DIR / "healthcare_facilities.csv"
+    if not csv.exists():
+        log.warning("healthcare_facilities.csv not found; using tiny fallback facility set")
+        return _FALLBACK_FACILITY_DATA
+    df = pd.read_csv(csv)[["id", "lat", "lon", "district"]].dropna(subset=["lat", "lon", "district"])
+    return df.to_dict("records")
+
+
+def _load_stop_data() -> list:
+    """[{id, lat, lon}], sourced from gtfs_stops.csv (real WL stops + illustrative
+    regional hubs, see gtfs_ingestion.py) when present."""
+    import pandas as pd
+    csv = RAW_DIR / "gtfs_stops.csv"
+    if not csv.exists():
+        log.warning("gtfs_stops.csv not found; using tiny fallback stop set")
+        return _FALLBACK_STOP_DATA
+    df = pd.read_csv(csv)
+    return [{"id": r["stop_id"], "lat": float(r["stop_lat"]), "lon": float(r["stop_lon"])}
+            for _, r in df.iterrows()]
 
 
 def materialize_reachability() -> Graph:
@@ -94,14 +113,20 @@ def materialize_reachability() -> Graph:
     for prefix, uri in NAMESPACES.items():
         g.bind(prefix, Namespace(uri))
 
+    facility_data = _load_facility_data()
+    stop_data = _load_stop_data()
+    district_centroids = _load_district_centroids()
+    log.info(f"Reachability inputs: {len(facility_data)} facilities, {len(stop_data)} stops, "
+             f"{len(district_centroids)} district centroids")
+
     triples_added = 0
-    for fac in FACILITY_DATA:
+    for fac in facility_data:
         fac_uri = HKGR[f"facility/{fac['id']}"]
         # Find nearest stop
-        nearest_stop = min(STOP_DATA,
+        nearest_stop = min(stop_data,
                            key=lambda s: haversine_km(fac["lat"], fac["lon"], s["lat"], s["lon"]))
 
-        for did, (dlat, dlon) in DISTRICT_CENTROIDS.items():
+        for did, (dlat, dlon) in district_centroids.items():
             total_mins = compute_transit_time(
                 fac["lat"], fac["lon"],
                 nearest_stop["lat"], nearest_stop["lon"],
@@ -117,7 +142,12 @@ def materialize_reachability() -> Graph:
                            Literal(round(total_mins, 2), datatype=XSD.decimal)))
                     triples_added += 1
 
-    log.info(f"Materialised {triples_added} reachability triples")
+    # NOTE: triples_added counts satisfied (facility, threshold) pairs, but
+    # each one emits *two* RDF triples (the reachableInXmin edge and a
+    # travelTimeToDistrict literal), so the true graph size is roughly
+    # double this -- log both rather than the undercounted figure alone.
+    log.info(f"Materialised {triples_added} (facility, threshold) reachability facts "
+             f"-> {len(g)} RDF triples")
     return g
 
 

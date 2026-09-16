@@ -28,7 +28,7 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from config.settings import RDF_DIR, NAMESPACES
+from config.settings import RDF_DIR, RAW_DIR, NAMESPACES
 from src.utils.geo_utils import haversine_km
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -37,12 +37,23 @@ log = logging.getLogger(__name__)
 HKG_BASE = NAMESPACES["hkg"]
 HKGR_BASE = NAMESPACES["hkgr"]
 
-KNOWN_STOPS = [
+# Small fallback, used only if gtfs_stops.csv (the real WL stops + illustrative
+# regional hubs cached by gtfs_ingestion.py) hasn't been generated yet.
+_FALLBACK_KNOWN_STOPS = [
     {"id": "W001", "lat": 48.1851, "lon": 16.3761},
-    {"id": "W002", "lat": 48.1969, "lon": 16.3381},
     {"id": "L001", "lat": 48.2907, "lon": 14.2920},
     {"id": "I001", "lat": 47.2631, "lon": 11.4006},
 ]
+
+
+def _known_stops() -> list:
+    import pandas as pd
+    csv = RAW_DIR / "gtfs_stops.csv"
+    if not csv.exists():
+        return _FALLBACK_KNOWN_STOPS
+    df = pd.read_csv(csv)
+    return [{"id": r["stop_id"], "lat": float(r["stop_lat"]), "lon": float(r["stop_lon"])}
+            for _, r in df.iterrows()]
 
 
 def add_facility(facility_id: str, lat: float, lon: float,
@@ -70,7 +81,7 @@ def add_facility(facility_id: str, lat: float, lon: float,
     g.add((uri, HKG.addedAt,      Literal(datetime.utcnow().isoformat(), datatype=XSD.dateTime)))
 
     # Nearest stop link
-    nearest = min(KNOWN_STOPS, key=lambda s: haversine_km(lat, lon, s["lat"], s["lon"]))
+    nearest = min(_known_stops(), key=lambda s: haversine_km(lat, lon, s["lat"], s["lon"]))
     dist_km = haversine_km(lat, lon, nearest["lat"], nearest["lon"])
     g.add((uri, HKG.nearestStop,        HKGR[f"stop/{nearest['id']}"]))
     g.add((uri, HKG.nearestStopDistKm,  Literal(round(dist_km, 4), datatype=XSD.decimal)))
